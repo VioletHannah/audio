@@ -112,7 +112,7 @@ class AudioDoADataset(Dataset):
                 audio = np.concatenate([audio, padding])
 
             # 将音频数据存入相应位置
-            audio_data[row, col, :] = audio
+            audio_data[row, col, :] = audio/255
 
         # 将NumPy数组转换为PyTorch张量
         audio_tensor = torch.from_numpy(audio_data).float()
