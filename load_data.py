@@ -16,7 +16,7 @@ import glob
 
 
 class AudioDoADataset(Dataset):
-    def __init__(self, root_dir="G:\\audio\sin64_dataset", split="train", n_channels=16, sample_rate=16000, duration=1.0, transform=None):
+    def __init__(self, root_dir="G:\\audio\sin64_dataset", split="train", n_channels=64, sample_rate=16000, duration=1.0, transform=None):
         """
         参数:
         root_dir (str): 数据集根目录，包含wav和metadata文件夹
@@ -71,9 +71,11 @@ class AudioDoADataset(Dataset):
             metadata = json.load(f)
 
         # 获取DoA标签 (俯仰角)
-        azimuth = metadata.get('source_azimuth')
-        elevation = metadata.get('source_elevation')
-        doa = np.array([azimuth, elevation])
+        doa = metadata.get('sources')
+
+        # azimuth = metadata.get('source_azimuth')
+        # elevation = metadata.get('source_elevation')
+        # doa = np.array([azimuth, elevation])
 
         # 读取所有音频通道
         audio_files = sorted(glob.glob(os.path.join(room_path, "*.wav")))[:self.n_channels]
@@ -116,7 +118,7 @@ class AudioDoADataset(Dataset):
 
         # 将NumPy数组转换为PyTorch张量
         audio_tensor = torch.from_numpy(audio_data).float()
-        doa_tensor = torch.from_numpy(doa).float()
+        # doa_tensor = torch.from_numpy(doa).float()
 
         # 应用转换（如果有）
         if self.transform:
@@ -126,12 +128,12 @@ class AudioDoADataset(Dataset):
 
         C1, C2, T = audio_tensor.shape
         audio_tensor = audio_tensor.view(C1 * C2, T)
-        return audio_tensor, doa_tensor
+        return audio_tensor, doa
 
 
 if __name__ == "__main__":
     dataset = AudioDoADataset(
-        root_dir="/home/zengkehan/voice/single64_dataset",
+        root_dir="/home/zengkehan/voice/speech_snr_30",
         split="train",
         n_channels=64,
         sample_rate=48000,
