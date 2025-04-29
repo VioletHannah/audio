@@ -99,4 +99,3 @@ class MultiSource3DCNNMapNet(nn.Module):
 # m = MultiSource3DCNNMapNet()
 # x = torch.randn(2, 1, 16000, 8, 8)
 # y = m(x)
-# print(y.shape)

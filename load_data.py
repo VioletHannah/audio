@@ -9,10 +9,38 @@ import os
 import json
 import numpy as np
 import torch
+from scipy.ndimage import gaussian_filter
 from torch.utils.data import Dataset
 import soundfile as sf
 # import librosa
 import glob
+import math
+
+def calculate_alpha_beta(theta, phi):
+    # theta和phi转换为弧度
+    theta = math.radians(theta)
+    phi = math.radians(phi)
+
+    # 计算alpha, z-x夹角    计算beta, z-y夹角
+    alpha = math.atan(math.cos(theta) * math.cos(phi) / math.sin(phi))
+    beta = math.atan(math.sin(theta) * math.cos(phi) / math.sin(phi))
+
+    # 将alpha和beta转换为角度
+    return np.rad2deg(alpha), np.rad2deg(beta)
+
+
+def get_alpha_beta(sources):
+    result_list = []
+    for source in sources:
+        # 提取azimuth_deg和elevation_deg
+        theta = source["azimuth_deg"]
+        phi = source["elevation_deg"]
+
+        # 计算alpha和beta
+        alpha, beta = calculate_alpha_beta(theta, phi)
+        result_list.append((alpha, beta))
+
+    return result_list
 
 
 class AudioDoADataset(Dataset):
@@ -71,8 +99,8 @@ class AudioDoADataset(Dataset):
             metadata = json.load(f)
 
         # 获取DoA标签 (俯仰角)
-        doa = metadata.get('sources')
-
+        sources = metadata.get('sources')
+        doa = get_alpha_beta(sources)
         # azimuth = metadata.get('source_azimuth')
         # elevation = metadata.get('source_elevation')
         # doa = np.array([azimuth, elevation])
@@ -118,25 +146,53 @@ class AudioDoADataset(Dataset):
 
         # 将NumPy数组转换为PyTorch张量
         audio_tensor = torch.from_numpy(audio_data).float()
+        doa_tensor = torch.tensor(doa).float()
         # doa_tensor = torch.from_numpy(doa).float()
 
         # 应用转换（如果有）
         if self.transform:
             audio_tensor = self.transform(audio_tensor)
 
+        # C1, C2, T = audio_tensor.shape
+        # audio_tensor = audio_tensor.view(C1, C2, T)
+        audio_tensor = audio_tensor.permute(2, 0, 1).unsqueeze(0) # (1, T, C1, C2)
+        return audio_tensor, doa_tensor
 
+def collate_fn(batch):
+    # 分离数据和标签
+    inputs = [item[0] for item in batch]
+    targets = [item[1] for item in batch]
+    # 堆叠数据（假设输入形状一致）
+    inputs = torch.stack(inputs, dim=0)
+    # 标签保持为列表，每个元素是原始形状
+    return inputs, targets
 
-        C1, C2, T = audio_tensor.shape
-        audio_tensor = audio_tensor.view(C1 * C2, T)
-        return audio_tensor, doa
+def create_heatmap(doa, grid_size=128, sigma=2):
+    # doa: 一个列表，内有B个Tensor，每个Tensor的形状为[source num, 2]
+    batch_size = len(doa)
+    # 初始化热力图矩阵
+    heatmap = np.zeros((batch_size, grid_size, grid_size))
+    # 遍历每个样本
+    for b in range(batch_size):
+        sources = doa[b].cpu().numpy()
+        for point in sources:  # 遍历每个声源
+            alpha, beta = point
+            # 坐标映射（假设原始范围是 [-63, 64)）
+            x = int(np.clip(alpha + 63, 0, grid_size - 1))  # 防止越界
+            y = int(np.clip(beta + 63, 0, grid_size - 1))
+            heatmap[b, x, y] += 1
+        # 对每个样本单独应用高斯滤波
+        heatmap[b] = gaussian_filter(heatmap[b], sigma=sigma)
 
+    return torch.from_numpy(heatmap)
 
+"""
 if __name__ == "__main__":
     dataset = AudioDoADataset(
-        root_dir="/home/zengkehan/voice/speech_snr_30",
+        root_dir="/home/zengkehan/voice/multisource_dataset",
         split="train",
         n_channels=64,
-        sample_rate=48000,
+        sample_rate=16000,
         duration=1.0
     )
 
@@ -153,9 +209,14 @@ if __name__ == "__main__":
         device = torch.device("cpu")
         print("CUDA not available, using CPU.")
 
-    train_loader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=8)
+    train_loader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=4, collate_fn=collate_fn)
     for batch_audio, batch_doa in train_loader:
         print(f"Batch audio shape: {batch_audio.shape}")
         # torch.Size([16, 64, 48000])
-        print(f"Batch DoA shape: {batch_doa.shape}") # torch.Size([16, 2])
+        print(f"Batch DoA: {batch_doa}") # torch.Size([16, 2])
+        # 计算热力图
+        heatmap = create_heatmap(batch_doa)
+        print(f"Heatmap shape: {heatmap.shape}")
         break
+
+"""
