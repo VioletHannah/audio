@@ -78,6 +78,7 @@ class MultiSource3DCNNMapNet(nn.Module):
         )
         self.final = nn.Conv2d(32, 1, kernel_size=1)
 
+
     def forward(self, x):
         # x: [B, 1, 16000, 8, 8]
         x = self.Conv3Dstack1(x)
