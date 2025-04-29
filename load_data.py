@@ -142,12 +142,11 @@ class AudioDoADataset(Dataset):
                 audio = np.concatenate([audio, padding])
 
             # 将音频数据存入相应位置
-            audio_data[row, col, :] = audio/255
+            audio_data[row, col, :] = audio
 
         # 将NumPy数组转换为PyTorch张量
         audio_tensor = torch.from_numpy(audio_data).float()
         doa_tensor = torch.tensor(doa).float()
-        # doa_tensor = torch.from_numpy(doa).float()
 
         # 应用转换（如果有）
         if self.transform:
@@ -156,35 +155,30 @@ class AudioDoADataset(Dataset):
         # C1, C2, T = audio_tensor.shape
         # audio_tensor = audio_tensor.view(C1, C2, T)
         audio_tensor = audio_tensor.permute(2, 0, 1).unsqueeze(0) # (1, T, C1, C2)
-        return audio_tensor, doa_tensor
+        heatmap_tensor = create_heatmap(doa_tensor)
+        return audio_tensor, heatmap_tensor
 
-def collate_fn(batch):
-    # 分离数据和标签
-    inputs = [item[0] for item in batch]
-    targets = [item[1] for item in batch]
-    # 堆叠数据（假设输入形状一致）
-    inputs = torch.stack(inputs, dim=0)
-    # 标签保持为列表，每个元素是原始形状
-    return inputs, targets
 
+# doa: 一个[source num, 2]的二维数组
 def create_heatmap(doa, grid_size=128, sigma=2):
-    # doa: 一个列表，内有B个Tensor，每个Tensor的形状为[source num, 2]
-    batch_size = len(doa)
     # 初始化热力图矩阵
-    heatmap = np.zeros((batch_size, grid_size, grid_size))
+    heatmap = np.zeros((grid_size, grid_size))
     # 遍历每个样本
-    for b in range(batch_size):
-        sources = doa[b].cpu().numpy()
-        for point in sources:  # 遍历每个声源
-            alpha, beta = point
-            # 坐标映射（假设原始范围是 [-63, 64)）
-            x = int(np.clip(alpha + 63, 0, grid_size - 1))  # 防止越界
-            y = int(np.clip(beta + 63, 0, grid_size - 1))
-            heatmap[b, x, y] += 1
-        # 对每个样本单独应用高斯滤波
-        heatmap[b] = gaussian_filter(heatmap[b], sigma=sigma)
+    sources = doa.cpu().numpy()
+    for point in sources:  # 遍历每个声源
+        alpha, beta = point
+        # 坐标映射（假设原始范围是 [-63, 64)）
+        x = int(np.clip(alpha + 63, 0, grid_size - 1))  # 防止越界
+        y = int(np.clip(beta + 63, 0, grid_size - 1))
+        heatmap[x, y] += 1
+    # 归一化
+    heatmap_max = heatmap.max()
+    if heatmap_max > 0:
+        heatmap = heatmap / heatmap_max
+    # 对每个样本单独应用高斯滤波
+    heatmap = gaussian_filter(heatmap, sigma=sigma)
 
-    return torch.from_numpy(heatmap)
+    return torch.from_numpy(heatmap).float()
 
 """
 if __name__ == "__main__":

@@ -10,8 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 class MultiSource3DCNNMapNet(nn.Module):
     def __init__(self):
         super(MultiSource3DCNNMapNet, self).__init__()
@@ -77,6 +75,8 @@ class MultiSource3DCNNMapNet(nn.Module):
             nn.ReLU(inplace=True)
         )
         self.final = nn.Conv2d(32, 1, kernel_size=1)
+        self.relu  = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
 
 
     def forward(self, x):
@@ -88,9 +88,11 @@ class MultiSource3DCNNMapNet(nn.Module):
         x = self.Conv3Dstack3(x)
         # x: [B, 512, 2, 8, 8]
         x = self.Conv3D(x).squeeze()
+        x = self.relu(x)
         # x: [B, 1024, 8, 8]
 
         x = self.conv2d(x)
+        x = self.relu(x)
         # x: [B, 512, 8, 8]
 
         x = self.up1(x)
@@ -99,8 +101,7 @@ class MultiSource3DCNNMapNet(nn.Module):
         x = self.up4(x)
         # x: [B, 32, 128, 128]
         x = self.final(x).squeeze()
-        # x: [B, 128, 128]
-        x = torch.sigmoid(x)
+        x = self.sigmoid(x)
         # x: [B, 128, 128]
 
         return x
