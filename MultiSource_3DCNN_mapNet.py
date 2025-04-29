@@ -19,26 +19,35 @@ class MultiSource3DCNNMapNet(nn.Module):
         # 3D卷积层
         self.Conv3Dstack1 = nn.Sequential(
             nn.Conv3d(1, 2, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1),
+            nn.BatchNorm3d(2),
             nn.ReLU(inplace=True),
             nn.Conv3d(2, 4, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1),
+            nn.BatchNorm3d(4),
             nn.ReLU(inplace=True),
             nn.Conv3d(4, 8, kernel_size=(5, 3, 3), stride=(5, 1, 1), padding=(0, 1, 1)),
+            nn.BatchNorm3d(8),
             nn.ReLU(inplace=True),
         )
         self.Conv3Dstack2 = nn.Sequential(
             nn.Conv3d(8, 16, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1),
+            nn.BatchNorm3d(16),
             nn.ReLU(inplace=True),
             nn.Conv3d(16, 32, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1),
+            nn.BatchNorm3d(32),
             nn.ReLU(inplace=True),
             nn.Conv3d(32, 64, kernel_size=(5, 3, 3), stride=(5, 1, 1), padding=(0, 1, 1)),
+            nn.BatchNorm3d(64),
             nn.ReLU(inplace=True),
         )
         self.Conv3Dstack3 = nn.Sequential(
             nn.Conv3d(64, 128, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1),
+            nn.BatchNorm3d(128),
             nn.ReLU(inplace=True),
             nn.Conv3d(128, 256, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1),
+            nn.BatchNorm3d(256),
             nn.ReLU(inplace=True),
             nn.Conv3d(256, 512, kernel_size=(5, 3, 3), stride=(5, 1, 1), padding=(0, 1, 1)),
+            nn.BatchNorm3d(512),
             nn.ReLU(inplace=True),
         )
         self.Conv3D = nn.Conv3d(512, 1024, kernel_size=(3, 3, 3), stride=(2, 1, 1), padding=1)
