@@ -34,9 +34,9 @@ dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 # model = MicArrayResNet(pretrained=True)
 model = MultiSource3DCNNMapNet()
 model = model.to(device)
-# model_path = 'snr_30_sound_model.pth'
-# checkpoint = torch.load(model_path)
-# model.load_state_dict(checkpoint['model_state_dict'])
+model_path = 'mulsource_sound_model291.pth'
+checkpoint = torch.load(model_path)
+model.load_state_dict(checkpoint['model_state_dict'])
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 100)
@@ -60,8 +60,24 @@ for epoch in range(1000):
         optimizer.step()
         logger.info(f"Epoch {epoch+1}, Loss: {loss.item()}")
         # VIS
-        result = pred_hm[0].cpu().detach().numpy()
-        gt = heatmaps[0].cpu().detach().numpy()
+        row_num = 4
+        col_num = heatmaps.shape[0] // row_num
+        row_pred = []
+        row_gt = []
+        for h in range(row_num):
+            col_pred = []
+            col_gt = []
+            for w in range(col_num):
+                pred_slice = pred_hm[h * col_num + w].cpu().detach().numpy()
+                heatmap_slice = heatmaps[h * col_num + w].cpu().detach().numpy()
+                pred_slice = np.pad(pred_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
+                heatmap_slice = np.pad(heatmap_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
+                col_pred.append(pred_slice)
+                col_gt.append(heatmap_slice)
+            row_pred.append(np.concatenate(col_pred, axis=1))
+            row_gt.append(np.concatenate(col_gt, axis=1))
+        result = np.concatenate(row_pred, axis=0)
+        gt = np.concatenate(row_gt, axis=0)
         cv2.namedWindow("result",0)
         cv2.imshow("result", result)
         cv2.namedWindow("gt",0)

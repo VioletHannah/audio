@@ -177,7 +177,9 @@ def create_heatmap(doa, grid_size=128, sigma=2):
         heatmap = heatmap / heatmap_max
     # 对每个样本单独应用高斯滤波
     heatmap = gaussian_filter(heatmap, sigma=sigma)
-
+    heatmap_max = heatmap.max()
+    if heatmap_max > 0:
+        heatmap = heatmap / heatmap_max
     return torch.from_numpy(heatmap).float()
 
 """
