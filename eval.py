@@ -169,7 +169,6 @@ def evaluate_model(dataset_path, model_path='sound_model.pth'):
     # plt.savefig('error_analysis.png')
     # plt.show()
 
-
 if __name__ == "__main__":
     evaluate_model(dataset_path="/home/zengkehan/voice/multisource_dataset",
                    model_path="/home/zengkehan/ssl/mulsource_sound_model91.pth")

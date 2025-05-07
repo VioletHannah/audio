@@ -1,4 +1,5 @@
 import torch
+
 def heatmapBiLoss(pred, target, threshold=0.5, alpha=20):
     # 二分类loss pred: [B, 128, 128]，target: [B, 128, 128]
     # 计算二分类交叉熵损失
