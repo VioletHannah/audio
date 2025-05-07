@@ -7,8 +7,11 @@
 # @Software: PyCharm
 import os
 import json
+import random
+
 import numpy as np
 import torch
+from PyQt5.QtGui.QRawFont import weight
 from scipy.ndimage import gaussian_filter
 from torch.utils.data import Dataset
 import soundfile as sf
@@ -44,7 +47,7 @@ def get_alpha_beta(sources):
 
 
 class AudioDoADataset(Dataset):
-    def __init__(self, root_dir="G:\\audio\sin64_dataset", split="train", n_channels=64, sample_rate=16000, duration=1.0, transform=None):
+    def __init__(self, root_dir="G:\\audio\sin64_dataset", split="train", n_channels=64, sample_rate=16000, duration=1.0, augm = True):
         """
         参数:
         root_dir (str): 数据集根目录，包含wav和metadata文件夹
@@ -60,7 +63,7 @@ class AudioDoADataset(Dataset):
         self.n_channels = n_channels
         self.sample_rate = sample_rate
         self.duration = duration
-        self.transform = transform
+        self.augm = augm
         self.target_samples = int(sample_rate * duration)
 
         # 获取所有房间目录
@@ -148,19 +151,42 @@ class AudioDoADataset(Dataset):
         audio_tensor = torch.from_numpy(audio_data).float()
         doa_tensor = torch.tensor(doa).float()
 
-        # 应用转换（如果有）
-        if self.transform:
-            audio_tensor = self.transform(audio_tensor)
-
         # C1, C2, T = audio_tensor.shape
         # audio_tensor = audio_tensor.view(C1, C2, T)
         audio_tensor = audio_tensor.permute(2, 0, 1).unsqueeze(0) # (1, T, C1, C2)
         heatmap_tensor = create_heatmap(doa_tensor)
+
+        # 数据增强
+        if self.augm:
+            audio_tensor = self._augment(audio_tensor)
         return audio_tensor, heatmap_tensor
+
+    def _augment(self, x):
+        """
+        数据增强函数
+        :param x: Tensor of shape (1, T, C1, C2)
+        :return: x: 增强后的音频张量
+        """
+        c1, c2 = x.shape[2], x.shape[3]
+
+        # 1 对某一通道随机增益(0.8, 1.2)
+        gain = torch.empty(1).uniform_(0.8, 1.2)
+        i, j = random.randint(0, c1 - 1), random.randint(0, c2 - 1)
+        x[0, :, i, j] *= gain
+
+        # 2 随机通道丢弃（模拟麦克风故障）
+        if torch.rand(1) < 0.2:
+            n_drop = random.choices([1, 2, 3], weights=[0.6, 0.3, 0.1])[0]
+            for _ in range(n_drop):
+                # 随机选择一个通道进行丢弃
+                i, j = random.randint(0, c1 - 1), random.randint(0, c2 - 1)
+                x[0, :, i, j] = 0.0
+
+        return x
 
 
 # doa: 一个[source num, 2]的二维数组
-def create_heatmap(doa, grid_size=128, sigma=2):
+def create_heatmap(doa, grid_size=128, sigma=1):
     # 初始化热力图矩阵
     heatmap = np.zeros((grid_size, grid_size))
     # 遍历每个样本
@@ -171,15 +197,13 @@ def create_heatmap(doa, grid_size=128, sigma=2):
         x = int(np.clip(alpha + 63, 0, grid_size - 1))  # 防止越界
         y = int(np.clip(beta + 63, 0, grid_size - 1))
         heatmap[x, y] += 1
+    # 对每个样本单独应用高斯滤波
+    heatmap = gaussian_filter(heatmap, sigma=sigma)
     # 归一化
     heatmap_max = heatmap.max()
     if heatmap_max > 0:
         heatmap = heatmap / heatmap_max
-    # 对每个样本单独应用高斯滤波
-    heatmap = gaussian_filter(heatmap, sigma=sigma)
-    heatmap_max = heatmap.max()
-    if heatmap_max > 0:
-        heatmap = heatmap / heatmap_max
+
     return torch.from_numpy(heatmap).float()
 
 """
