@@ -5,64 +5,73 @@
 # @Site : 评估model文件好不好，在测试集上运行代码，看看效果
 # @File : eval.py
 # @Software: PyCharm
-from load_data import AudioDoADataset
-from train import heatmapLoss
-from MultiSource_3DCNN_mapNet import MultiSource3DCNNMapNet
-from logger import *
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+from traditional.srp.SRP import plot_joint_error_heatmap
+from traditional.srp.SRP4mulssl import match_sources
+from load_data import AudioDoADataset, collate_fn
+from model.MultiSource_3DCNN_mapNet import MultiSource3DCNNMapNet
 
 from torch.utils.data import DataLoader
 import torch
+import logging
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 import matplotlib.pyplot as plt
 import numpy as np
-import math
 import cv2
 
-def plot_polar_heatmap(azimuth_errors, elevation_errors, title=""):
+def blue_red_heatmap(data=None, title="4×4 Gaussian-3-point Heatmaps", save_path=None):
     """
-    极坐标热力图可视化函数
-    参数：
-    - azimuth_errors: 方位角误差列表
-    - elevation_errors: 俯仰角误差列表
+    生成16张 128×128 的随机三点高斯热图，4×4 网格显示。
+    每图先独立高斯模糊再自身归一化，vmin=0 白色, vmax=1 纯红。
     """
-    plt.figure(figsize=(8, 8))
-    ax = plt.subplot(111, projection='polar')
-    hb = ax.hexbin(np.radians(azimuth_errors), elevation_errors,
-                   gridsize=30, cmap='viridis', mincnt=1)
-    plt.colorbar(hb, label='误差密度')
-    plt.title(title)
-    return ax
+    if not isinstance(data, np.ndarray) or data.shape != (16, 128, 128):
+        raise ValueError("输入 data 必须是形状 (16,128,128) 的 numpy 数组")
+
+    # 配色和标准化
+    colors = [(1,1,1), (0.5,0.5,1), (1,0,0)]  # 白 → 蓝 → 红
+    cmap = LinearSegmentedColormap.from_list("white_blue_red", colors, N=256)
+    norm = Normalize(vmin=0, vmax=1)
+
+    # 绘图
+    fig, axs = plt.subplots(4,4, figsize=(10, 8),
+                            gridspec_kw={'wspace':0.05,'hspace':0.05})
+    fig.suptitle(title, fontsize=15, y=0.92)
+
+    for idx, ax in enumerate(axs.flat):
+        im = ax.imshow(data[idx], cmap=cmap, norm=norm,
+                       origin='lower', aspect='equal')
+        ax.set_xticks([]); ax.set_yticks([])
+
+    # 统一色条
+    cax = fig.add_axes([0.90, 0.12, 0.015, 0.76])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label('Intensity', rotation=270, labelpad=15)
+    cbar.ax.yaxis.label.set_size(15)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
+
+    return fig, axs
 
 
-def transfer_to_vector(azimuth, elevation):
-    """
-    将方位角和俯仰角转换为三维向量
-    参数：
-    - azimuth: 方位角（弧度）
-    - elevation: 俯仰角（弧度）
-    返回：
-    - 三维向量
-    """
-    x = math.cos(azimuth) * math.cos(elevation)
-    y = math.sin(azimuth) * math.cos(elevation)
-    z = math.sin(elevation)
-    return np.array([x, y, z])
+def loc_source_position(heatmap):
+    heatmap = np.where(heatmap < 0.2, 0.0, heatmap) # 去除小于0.2的值
+    heatmap_int = (heatmap * 255).astype(np.uint8)
+    heatmap_int = cv2.threshold(heatmap_int, 127, 255, cv2.THRESH_BINARY)[1]
+    contours, _ = cv2.findContours(heatmap_int, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    lst = []
+    for contour in contours:
+        M = cv2.moments(contour)
+        if M['m00'] != 0:
+            cx = int(M['m10']/M['m00'])
+            cy = int(M['m01']/M['m00'])
+            lst.append([cx, cy])
 
-
-def calculate_spatial_angle(azimuth_label, elevation_label, azimuth_true, elevation_true):
-    # 将标签和真实方向转换为三维向量
-    label_vector = transfer_to_vector(azimuth_label, elevation_label)
-    true_vector = transfer_to_vector(azimuth_true, elevation_true)
-
-    # 计算点积
-    dot_product = label_vector @ true_vector
-
-    # 确保点积在有效范围内
-    dot_product = max(min(dot_product, 1.0), -1.0)
-
-    # 计算空间角（弧度）
-    spatial_angle = math.acos(dot_product)
-
-    return spatial_angle
+    return np.array(lst)
 
 
 def evaluate_model(dataset_path, model_path='sound_model.pth'):
@@ -74,45 +83,68 @@ def evaluate_model(dataset_path, model_path='sound_model.pth'):
     model.train()
 
     # 2. 加载测试数据集
-    test_dataset = AudioDoADataset(root_dir=dataset_path, split="test", n_channels=64)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    test_dataset = AudioDoADataset(root_dir=dataset_path, split="test", heatmap_label=False)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=collate_fn)
 
     # 3. 初始化存储
-    # true_azimuth = []
-    # true_elevation = []
-    # pred_azimuth = []
-    # pred_elevation = []
+    true_azimuth = []
+    true_elevation = []
+    pred_azimuth = []
+    pred_elevation = []
 
     with (torch.no_grad()):
         for x, y in test_loader:
             x = x.to(device)
-            y = y.to(device)
+            # x_test = x[:,0,:,0,0]
+            # y = y.to(device)
             pred = model(x)
-            loss = heatmapLoss(pred, y)
-            logger.info(f"Test Loss: {loss.item():.6f}")
+            # loss = heatmapLoss(pred, y)
+            # logger.info(f"Test Loss: {loss.item():.6f}")
+            # 计算声源位置
+            for i in range(pred.shape[0]):
+                pred_angle = (loc_source_position(pred[i].cpu().numpy()) )
+                true_angle = (y[i].cpu().numpy())
+                matches, missed_detections, false_alarms, correct_matches = match_sources(true_angle, pred_angle, 30)
 
-            row_num = 4
-            col_num = 4
-            row_pred = []
-            row_gt = []
-            for h in range(row_num):
-                col_pred = []
-                col_gt = []
-                for w in range(col_num):
-                 pred_slice = pred[h * col_num + w].cpu().detach().numpy()
-                 heatmap_slice = y[h * col_num + w].cpu().detach().numpy()
-                 pred_slice = np.pad(pred_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
-                 heatmap_slice = np.pad(heatmap_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
-                 col_pred.append(pred_slice)
-                 col_gt.append(heatmap_slice)
-                row_pred.append(np.concatenate(col_pred, axis=1))
-                row_gt.append(np.concatenate(col_gt, axis=1))
-            result = np.concatenate(row_pred, axis=0)
-            gt = np.concatenate(row_gt, axis=0)
-            result_uint8 = (result * 255).astype('uint8')
-            cv2.imwrite("evalresult.png", result_uint8)
-            gt_uint8 = (gt * 255).astype('uint8')
-            cv2.imwrite("evalgt.png", gt_uint8)
+                print(f"匹配情况: {matches}")
+                print(f"漏检声源: {missed_detections}")
+                print(f"误检声源: {false_alarms}")
+                print(f"正确匹配声源: {correct_matches}")
+                print()
+                # logger.info(f"Missed detections: {missed_detections}")
+                # logger.info(f"False alarms: {false_alarms}")
+                # logger.info(f"Correct matches: {correct_matches}")
+                # logger.info(f"匹配情况: {matches}")
+                # 收集匹配结果
+                for t_az, t_cola, p_az, p_cola in matches:
+                    if t_az is not None and p_az is not None:
+                        true_azimuth.append(np.radians(t_az))
+                        true_elevation.append(np.radians(t_cola))
+                        pred_azimuth.append(np.radians(p_az))
+                        pred_elevation.append(np.radians(p_cola))
+
+            # row_num = 4
+            # col_num = 4
+            # row_pred = []
+            # row_gt = []
+            # for h in range(row_num):
+            #     col_pred = []
+            #     col_gt = []
+            #     for w in range(col_num):
+            #      pred_slice = pred[h * col_num + w].cpu().detach().numpy()
+            #      heatmap_slice = y[h * col_num + w].cpu().detach().numpy()
+            #      pred_slice = np.pad(pred_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
+            #      heatmap_slice = np.pad(heatmap_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
+            #      col_pred.append(pred_slice)
+            #      col_gt.append(heatmap_slice)
+            #     row_pred.append(np.concatenate(col_pred, axis=1))
+            #     row_gt.append(np.concatenate(col_gt, axis=1))
+            # result = np.concatenate(row_pred, axis=0)
+            # gt = np.concatenate(row_gt, axis=0)
+            # result_uint8 = (result * 255).astype('uint8')
+            # cv2.imwrite("evalresult.png", result_uint8)
+            # gt_uint8 = (gt * 255).astype('uint8')
+            # cv2.imwrite("evalgt.png", gt_uint8)
 
             # true_azimuth.extend(y[:, 0].cpu().numpy().tolist())
             # true_elevation.extend(y[:, 1].cpu().numpy().tolist())
@@ -121,8 +153,7 @@ def evaluate_model(dataset_path, model_path='sound_model.pth'):
             # pred_azimuth.extend(pred[:, 0].cpu().numpy().tolist())
             # pred_elevation.extend(pred[:, 1].cpu().numpy().tolist())
 
-
-    # plot_joint_error_heatmap(true_azimuth, true_elevation, pred_azimuth, pred_elevation)
+    plot_joint_error_heatmap(true_azimuth, true_elevation, pred_azimuth, pred_elevation)
 
 
 """
@@ -171,4 +202,4 @@ def evaluate_model(dataset_path, model_path='sound_model.pth'):
 
 if __name__ == "__main__":
     evaluate_model(dataset_path="/home/zengkehan/voice/multisource_dataset",
-                   model_path="/home/zengkehan/ssl/mulsource_sound_model91.pth")
+                   model_path="/home/zengkehan/ssl/mulsource_sound_model.pth")
