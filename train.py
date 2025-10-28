@@ -13,7 +13,7 @@ from model.MultiSource_3DCNN_mapNet import MultiSource3DCNNMapNet
 
 
 if __name__ == "__main__":
-    logger = get_logger("./freq_train_0918.log")
+    logger = get_logger("./freq_train_1028.log")
     if torch.cuda.is_available():
         device = torch.device("cuda")          # 使用 GPU
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")
@@ -22,21 +22,21 @@ if __name__ == "__main__":
         print("CUDA not available, using CPU.")
 
     ################## 这里设置数据集 ###################
-    datadir = "/home/kehan.zeng/DATA2/voice/multisource_with_freq_analysis"
+    datadir = "/home/kehan.zeng/DATA2/voice/mssl_libri"
     dataset = AudioDoADataset(root_dir=datadir, split="train", n_channels=256)
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, drop_last=True)
 
     ################# 这里设置模型 ###################
     model = MultiSource3DCNNMapNet()
     model = model.to(device)
-    model_path = '/home/kehan.zeng/DATA1/param/freq/freq_1000.pth'
-    checkpoint = torch.load(model_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # model_path = '/home/kehan.zeng/DATA1/param/freq/freq_1000.pth'
+    # checkpoint = torch.load(model_path)
+    # model.load_state_dict(checkpoint['model_state_dict'])
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 100)
     model.train()
-    for epoch in range(1001, 2001):
+    for epoch in range(1001):
         sumloss = 0
         for inputs, heatmaps in dataloader:
             # inputs = inputs.to(device).transpose(1, 2).unsqueeze(1)
@@ -90,6 +90,6 @@ if __name__ == "__main__":
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-            }, f'/home/kehan.zeng/DATA1/param/freq/freq_{epoch}.pth')
+            }, f'/home/kehan.zeng/DATA1/param/freq_libri/freq_{epoch}.pth')
 
         scheduler.step()
