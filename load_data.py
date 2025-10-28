@@ -15,30 +15,18 @@ from torch.utils.data import Dataset
 import soundfile as sf
 import glob
 import math
-from util import apply_gaussian_filter_with_preserved_peak
-
-def calculate_alpha_beta(theta, phi):
-    # theta和phi转换为弧度
-    theta = math.radians(theta)
-    phi = math.radians(phi)
-
-    # 计算alpha, z-x夹角    计算beta, z-y夹角
-    alpha = math.atan(math.cos(theta) * math.cos(phi) / math.sin(phi))
-    beta = math.atan(math.sin(theta) * math.cos(phi) / math.sin(phi))
-
-    # 将alpha和beta转换为角度
-    return np.rad2deg(alpha), np.rad2deg(beta)
+from util import apply_gaussian_filter_with_preserved_peak, azimuth_elevation_to_alpha_beta
 
 
 def get_alpha_beta(sources):
     result_list = []
     for source in sources:
         # 提取azimuth_deg和elevation_deg
-        theta = source["azimuth_deg"]
-        phi = source["elevation_deg"]
+        azimuth_deg = source["azimuth_deg"]
+        elevation_deg = source["elevation_deg"]
 
         # 计算alpha和beta
-        alpha, beta = calculate_alpha_beta(theta, phi)
+        alpha, beta = azimuth_elevation_to_alpha_beta(azimuth_deg, elevation_deg)
         result_list.append((alpha, beta))
 
     return result_list
@@ -49,7 +37,7 @@ def get_alpha_beta_intensity(sources, intensities_list):
         # 提取azimuth_deg和elevation_deg计算alpha和beta
         theta = source["azimuth_deg"]
         phi = source["elevation_deg"]
-        alpha, beta = calculate_alpha_beta(theta, phi)
+        alpha, beta = azimuth_elevation_to_alpha_beta(theta, phi)
 
         # 提取各个频段强度值
         band_intensity = intensities_list[i] if i < len(intensities_list) else [0.0]*5
@@ -152,7 +140,7 @@ class AudioDoADataset(Dataset):
                 audio_data[row_idx, col_idx, :] = audio[len(audio)-self.window_samples:len(audio)]
 
         # 数据标准化
-        audio_data = (audio_data - np.mean(audio_data)) / (np.std(audio_data) + 1e-9)
+        # audio_data = (audio_data - np.mean(audio_data)) / (np.std(audio_data) + 1e-9)
 
         # TODO: 测试Audio数据
         # print(f"Audio data shape: {audio_data.shape}, min: {np.min(audio_data):.6f}, max: {np.max(audio_data):.6f}, mean: {np.mean(audio_data):.6f}, std: {np.std(audio_data):.6f}")
@@ -162,7 +150,7 @@ class AudioDoADataset(Dataset):
 
         # 转换为网络输入形状
         audio_tensor = torch.from_numpy(audio_data).float()
-        audio_tensor = audio_tensor.permute(2, 0, 1).unsqueeze(0) # (1, T, C1, C2)
+        audio_tensor = audio_tensor.permute(2, 0, 1).unsqueeze(0) # (R, C, T) -> (1, T, C1, C2)
 
         if self.heatmap_label == True:
             # heatmap_tensor = create_heatmap(doa_tensor)
@@ -248,7 +236,7 @@ def heatmap_plot(heatmap, title="Heatmap", absflag=False):
     plt.ylabel('Alpha (degrees)')
     plt.show()
 
-def create_heatmap_multiband(doap, grid_size=128, center_freqs=[125, 500, 2000, 8000, 16000]):
+def create_heatmap_multiband(doap, grid_size=128, center_freqs=[31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]):
     # 初始化热力图矩阵
     heatmap = np.zeros((grid_size, grid_size))
     num_bands = len(center_freqs)
@@ -289,18 +277,18 @@ def create_heatmap_multiband(doap, grid_size=128, center_freqs=[125, 500, 2000, 
 
             # 创建当前频段的热力图
             band_heatmap = np.zeros((grid_size, grid_size))
-            band_heatmap[x, y] = intensity / 5
+            band_heatmap[x, y] = intensity
 
             # 应用高斯滤波
             band_heatmap = gaussian_filter(band_heatmap, sigma=sigma)
 
             # TODO: 测试代码 - 可视化每个频段的热力图
-            # heatmap_plot(band_heatmap, title=f"Band {center_freqs[band_idx]} Hz Heatmap")
+            heatmap_plot(band_heatmap, title=f"Band {center_freqs[band_idx]} Hz Heatmap", absflag=True)
 
             # 叠加到总热力图
             heatmap += band_heatmap
     # TODO: 测试代码 - 可视化叠加后的热力图
-    # heatmap_plot(heatmap, title="Combined Heatmap")
+    heatmap_plot(heatmap, title="Combined Heatmap")
 
     return torch.from_numpy(heatmap).float()
 
