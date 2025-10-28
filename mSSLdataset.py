@@ -4,32 +4,27 @@
 # @Author : 箴澄
 # @File : mSSLdataset.py
 # @Software: PyCharm
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Time : 2025/4/23 15:07
-# @Author : 箴澄
-# @Func : 生成基于 NSynth 数据集的多声源定位数据集
-# @File : NSDmultiSSLdata.py
-# @Software: PyCharm
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pyroomacoustics as pra
 import soundfile as sf
-from scipy.signal import resample, butter, filtfilt
+from scipy.signal import resample, butter, filtfilt, sosfiltfilt, stft
+import warnings
 import random
 import json
 import os
 import glob
 
-def generate_source_position(room_dimension, r_min=4, r_max=30):
+def generate_source_position(room_dimension, r_min=4, r_max=30, azimuth=None, elevation=None):
     """
     随机生成一个声源位置
     :param room_dimension: 房间尺寸
     :return: 声源位置数组，方位角，俯仰角（弧度）
     """
-    azimuth = np.deg2rad(np.random.uniform(0, 360))  # 方位角
-    elevation = np.deg2rad(np.random.uniform(1, 91))
+    if azimuth is None and elevation is None:
+        azimuth = np.deg2rad(np.random.uniform(0, 360))  # 方位角
+        elevation = np.deg2rad(np.random.uniform(1, 91))
     r = np.random.uniform(r_min, r_max)  # 距离
 
     # 转换为笛卡尔坐标
@@ -133,12 +128,10 @@ def design_bandpass_filters(fs, order=4):
 
     return filters, center_freqs, bandwidths
 
-from scipy.signal import butter, sosfiltfilt, stft
-import warnings
 
 def calculate_source_intensity_by_freq(source_signal, source_position, mic_positions,
                                        fs=48000, order=4,
-                                       adc_range=1.0, sensitivity_mv_pa=50):
+                                       adc_range=1.0, sensitivity_mv_pa=500):
     """
     计算声源在各频带的强度（改进版，使用sosfiltfilt保证数值稳定）
     参数：
@@ -157,7 +150,7 @@ def calculate_source_intensity_by_freq(source_signal, source_position, mic_posit
     center_freqs = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
     # 计算平均距离衰减
-    distances = np.linalg.norm(source_position.reshape(3, 1) - mic_positions, axis=0)
+    distances = np.linalg.norm(np.array(source_position).reshape(3, 1) - mic_positions, axis=0)
     avg_attenuation = np.mean(1.0 / (distances + 1e-8))
 
     intensities = []
@@ -188,7 +181,7 @@ def calculate_source_intensity_by_freq(source_signal, source_position, mic_posit
             filtered_signal = np.nan_to_num(filtered_signal, nan=0.0, posinf=0.0, neginf=0.0)
             filtered_signal = np.clip(filtered_signal, -1e6, 1e6)
 
-            # 电压 -> 声压（Pa）
+            # 电压 -> 声压（Pa）, adc_range 单位 V, sensitivity_mv_pa 单位 mV/Pa
             p_actual = filtered_signal * (adc_range * 1000.0) / sensitivity_mv_pa
 
             # 计算 RMS（稳健）
@@ -220,7 +213,6 @@ def calculate_source_intensity_by_freq(source_signal, source_position, mic_posit
             intensities.append(0.0)
 
     return intensities, center_freqs
-
 
 def calculate_source_intensity_by_freq_backup(source_signal, source_position, mic_positions, filters, fs=48000, adc_range=1.0, sensitivity_mv_pa=50):
     """
@@ -260,7 +252,9 @@ def generate_multi_source_dataset(
         mic_num_per_line=16,
         dataset_path="path/to/nsynth-train/audio",
         output_path="/home/zengkehan/voice/multisource_with_intensity",
-        max_sources=3
+        max_sources=3,
+        fs = 48000,
+        samples_len = 16000
 ):
     # 配置输出路径
     output_base = output_path
@@ -268,10 +262,6 @@ def generate_multi_source_dataset(
     os.makedirs(os.path.join(output_base, "metadata"), exist_ok=True)
 
     # 加载音频文件列表
-    # audio_files = glob.glob(os.path.join(dataset_path, "*.flac"))
-    # if not audio_files:
-    #     raise ValueError("未找到AudioSet音频文件")
-    # === 递归加载 LibriSpeech 的所有音频文件 ===
     audio_files = glob.glob(os.path.join(dataset_path, "**", "*.flac"), recursive=True)
     if not audio_files:
         raise ValueError(f"未在 {dataset_path} 下找到 LibriSpeech 音频文件")
@@ -279,32 +269,24 @@ def generate_multi_source_dataset(
     # 创建麦克风阵列
     mic_positions = generate_mic_array_positions(mic_num_per_line, mic_length, room_dimension)
 
-    fs = 48000
-    samples_len = 16000
-
     # 滤波器组设计
-    # center_freqs = [125, 500, 2000, 8000, 16000]  # 中心频率 (Hz)
-    # bandwidths = [200, 400, 2000, 6000, 8000]
-    filters, center_freqs, bandwidths = design_bandpass_filters(fs, 4)
-    filter_config = {
-        'num_band': len(center_freqs),
-        'center_freqs': center_freqs,
-        'bandwidths': bandwidths,
-        'order': 4
-    }
-    with open(os.path.join(output_base, "filter_config.json"), 'w') as f:
-        json.dump(filter_config, f, indent=4)
+    # filters, center_freqs, bandwidths = design_bandpass_filters(fs, 4)
+    # filter_config = {
+    #     'num_band': len(center_freqs),
+    #     'center_freqs': center_freqs,
+    #     'bandwidths': bandwidths,
+    #     'order': 4
+    # }
+    # with open(os.path.join(output_base, "filter_config.json"), 'w') as f:
+    #     json.dump(filter_config, f, indent=4)
 
     # 记录每个样本的功率信息
-    sum_mean = 0
-    sum_sq_mean = 0
     for sample_idx in range(num_samples):
         metadata = {'sources': [], 'source_files': [], 'intensities': []}
         # 创建房间，添加麦克风阵列
         room = pra.ShoeBox(room_dimension, fs=fs, absorption=1.0, max_order=0)
         room.add_microphone_array(pra.MicrophoneArray(mic_positions, fs))
         # 随机生成声源数量（0-3），随后添加声源信息
-        # num_sources = np.random.randint(0, max_sources + 1)
         num_sources = random.choices(list(range(max_sources + 1)), [0.1, 0.2, 0.3, 0.4])[0]  # 根据权重随机选择声源数量
         # 存储所有声源的原始信号和位置
         source_signals = []
@@ -314,20 +296,38 @@ def generate_multi_source_dataset(
             # 随机选择音频文件
             audio_path = random.choice(audio_files)
             audio, orig_fs = sf.read(audio_path)
-            # 转为单声道
-            if len(audio.shape) > 1:
-                if audio.shape[1] == 2:
-                    audio = np.mean(audio, axis=1)
-                elif audio.shape[1] > 2:
-                    audio = audio[:, 0]
 
-            # 统一采样率并截取
-            if fs != orig_fs:
-                audio = resample(audio, int(48000 * len(audio) / fs))
-            if len(audio) < samples_len:
-                repeats = int(np.ceil(samples_len / len(audio)))
-                audio = np.tile(audio, repeats)
-            audio = audio[:samples_len] # 取前16000个采样点
+            def _prepare_audio_segment(audio, orig_fs, target_fs, samples_len):
+                audio = np.asarray(audio)
+                if audio.size == 0:
+                    return np.zeros(samples_len, dtype=np.float32)
+                # 转为单声道
+                if audio.ndim > 1:
+                    if audio.shape[1] == 2:
+                        audio = np.mean(audio, axis=1)
+                    else:
+                        audio = audio[:, 0]
+                # 统一采样率
+                if orig_fs != target_fs and len(audio) > 0:
+                    new_len = int(np.round(len(audio) * float(target_fs) / float(orig_fs)))
+                    if new_len <= 0:
+                        new_len = samples_len
+                    audio = resample(audio, new_len)
+                # 补齐或截取到指定长度
+                if len(audio) < samples_len:
+                    repeats = int(np.ceil(samples_len / len(audio)))
+                    audio = np.tile(audio, repeats)
+                audio = np.asarray(audio[:samples_len], dtype=np.float32)
+                return audio
+            # 预处理音频片段，统一单声道，长度和采样率
+            audio = _prepare_audio_segment(audio, orig_fs, fs, samples_len)
+
+            # TODO: 对声源信号进行缩放
+            current_rms = np.sqrt(np.mean(audio ** 2))
+            if current_rms > 0:
+                target_rms = 0.3  # 目标RMS值，可以根据需要调整
+                scaling = target_rms / current_rms
+                audio *= scaling
 
             # 创建声源
             position, azimuth, elevation = generate_source_position(room_dimension, r_min=3, r_max=10)
@@ -346,59 +346,56 @@ def generate_multi_source_dataset(
         # 计算每个声源的实际信号强度
         band_intensities = []
         for i in range(num_sources):
-            intensities = calculate_source_intensity_by_freq(
-                source_signals[i],
-                source_position=source_positions[i],
-                mic_positions=mic_positions,
-                filters=filters,
-                fs=fs
-            )
+            intensities, center_freqs = calculate_source_intensity_by_freq(source_signals[i], source_positions[i], mic_positions, fs=fs)
             band_intensities.append(intensities)
         metadata['intensities'] = band_intensities
 
         # 模拟房间声学，获得多通道信号
         if num_sources == 0:
             # 无生源时生成零信号
-            mixed_signal = np.zeros((mic_positions.shape[1], samples_len), dtype=np.float32)
+            mixed_signal = np.zeros((mic_positions.shape[1], samples_len), dtype=np.float64)
         else:
             # 有声源时进行房间声学模拟
             room.simulate()
             mixed_signal = room.mic_array.signals
+
+        # TODO: 噪音统一到后期添加
         # 统一添加噪声，噪声功率为信号功率的1/20
-        signal_power = np.mean(mixed_signal ** 2)
-        if signal_power < 1e-10: # 无生源时
-            noise_power = 0.01  # 默认噪声功率
-        else:
-            noise_power = signal_power / 20
-        # 添加噪声
-        noise = np.random.normal(0, np.sqrt(noise_power), mixed_signal.shape)
-        mixed_signal += noise
+        # signal_power = np.mean(mixed_signal ** 2)
+        # if signal_power < 1e-10: # 无生源时
+        #     noise_power = 0.01  # 默认噪声功率
+        # else:
+        #     noise_power = signal_power / 20
+        # # 添加噪声
+        # noise = np.random.normal(0, np.sqrt(noise_power), mixed_signal.shape)
+        # mixed_signal += noise
 
         # 保存多通道音频和标签元数据
-        room_dir = os.path.join(output_base, "wavs", f"sample_{sample_idx}")
-        os.makedirs(room_dir, exist_ok=True)
+
+        # 保存多通道音频和标签元数据
+        room_audio_dir = os.path.join(output_base, "wavs", f"sample_{sample_idx}")
+        os.makedirs(room_audio_dir, exist_ok=True)
         for ch in range(mixed_signal.shape[0]):
-            sf.write(f"{room_dir}/channel_{ch}.wav", mixed_signal[ch], fs)
+            sf.write(f"{room_audio_dir}/channel_{ch}.wav", mixed_signal[ch], fs)
         with open(os.path.join(output_base, "metadata", f"sample_{sample_idx}.json"), 'w') as f:
             json.dump(metadata, f, indent=4)
 
         print(f"生成样本 {sample_idx + 1}/{num_samples}，包含 {num_sources} 个声源")
 
-        # 统计样本信息
-        sum_mean += np.mean(mixed_signal)
-        sum_sq_mean += np.mean(mixed_signal ** 2)
-
-    global_mean = sum_mean / num_samples / (16*16*samples_len)
-    global_std = np.sqrt(sum_sq_mean / num_samples / (16*16*samples_len) - global_mean ** 2)
-    np.save(os.path.join(output_base, f"global_mean.npy"), global_mean)
-    np.save(os.path.join(output_base, f"global_std.npy"), global_std)
+    #     # 统计样本信息
+    #     sum_mean += np.mean(mixed_signal)
+    #     sum_sq_mean += np.mean(mixed_signal ** 2)
+    #
+    # global_mean = sum_mean / num_samples / (16*16*samples_len)
+    # global_std = np.sqrt(sum_sq_mean / num_samples / (16*16*samples_len) - global_mean ** 2)
+    # np.save(os.path.join(output_base, f"global_mean.npy"), global_mean)
+    # np.save(os.path.join(output_base, f"global_std.npy"), global_std)
 
 if __name__ == '__main__':
     generate_multi_source_dataset(
-        # dataset_path="/home/zengkehan/voice/audio/bal_train",
-        dataset_path="/home/kehan.zeng/DATA2/voice/bal_train_segment",
-        output_path="/home/kehan.zeng/DATA2/voice/multisource_with_freq_analysis",
-        num_samples=10000,
+        dataset_path="/home/kehan.zeng/DATA2/librispeech/LibriSpeech/test-clean",
+        output_path="/home/kehan.zeng/DATA2/voice/mssl_libri",
+        num_samples=3000,
         room_dimension=(120, 120, 100),
         mic_length=0.12,  # 8mm 麦克风间距 * 15 = 120mm
         mic_num_per_line=16,

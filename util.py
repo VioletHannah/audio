@@ -11,6 +11,20 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 import logging
 import datetime
 
+def heatmap_plot(heatmap, title="Heatmap", absflag=False):
+    from matplotlib import pyplot as plt
+    plt.figure(figsize=(6, 5))
+    if absflag:
+        plt.imshow(heatmap, cmap='jet', origin='lower', vmin=0, vmax=1)
+    else:
+        plt.imshow(heatmap, cmap='jet', origin='lower')
+    plt.colorbar(label='Intensity')
+    plt.title(title)
+    plt.xlabel('Beta (degrees)')
+    plt.ylabel('Alpha (degrees)')
+    plt.show()
+
+
 def get_logger(filename=None):
     # 如果未指定文件名，使用当前时间作为默认名
     if not filename:

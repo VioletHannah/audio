@@ -53,6 +53,16 @@ def collate_fn(batch):
     # 标签保持为列表，每个元素是原始形状
     return inputs, targets
 
+def add_noise(audio_data, SNR):
+    signal_power = np.mean(audio_data ** 2)
+    noise_power = signal_power / (10 ** (SNR / 10))
+    if noise_power == 0:
+        noise_power = 0.001
+    noise_std = np.sqrt(noise_power)
+    noise = np.random.normal(0, noise_std, audio_data.shape)
+    audio_data += noise
+
+
 class AudioDoADataset(Dataset):
     def __init__(self, root_dir="G:\\audio\sin64_dataset", split="train", n_channels=64, sample_rate=48000, duration=1.0, heatmap_label=True, augm = False):
         """
@@ -116,7 +126,6 @@ class AudioDoADataset(Dataset):
         # 获取DoA标签 (俯仰角)
         sources = metadata.get('sources', [])
         band_intensities = metadata.get('intensities', [])  # 多频段强度信息
-        center_freqs = metadata.get('center_freqs', [125, 500, 2000, 8000, 16000])  # 中心频率
 
         # 16x16阵列共256通道，筛选出需要的8x8通道
         selected_channels = []
@@ -126,7 +135,7 @@ class AudioDoADataset(Dataset):
                 selected_channels.append(channel_idx)
 
         # 初始化8x8音频张量
-        audio_data = np.zeros((self.n_mics, self.n_mics, self.window_samples), dtype=np.float32)
+        audio_data = np.zeros((self.n_mics, self.n_mics, self.window_samples), dtype=np.float64)
 
         # 读取并填充选中的通道数据
         for row_idx, r in enumerate(self.selected_indices):
@@ -137,10 +146,13 @@ class AudioDoADataset(Dataset):
                 audio, sr = sf.read(audio_file)
                 assert sr == self.sample_rate, f"采样率不匹配: {sr} != {self.sample_rate}"
                 # 截取16000样本窗口
-                audio_data[row_idx, col_idx, :] = audio[len(audio)-self.window_samples:len(audio)]
+                audio_data[row_idx, col_idx, :] = audio[len(audio)-self.window_samples:]
+
+        # 添加噪音 - 可选
+        audio_data = add_noise(audio_data, SNR = 60)
 
         # 数据标准化
-        # audio_data = (audio_data - np.mean(audio_data)) / (np.std(audio_data) + 1e-9)
+        audio_data = (audio_data - np.mean(audio_data)) / (np.std(audio_data) + 1e-9)
 
         # TODO: 测试Audio数据
         # print(f"Audio data shape: {audio_data.shape}, min: {np.min(audio_data):.6f}, max: {np.max(audio_data):.6f}, mean: {np.mean(audio_data):.6f}, std: {np.std(audio_data):.6f}")
@@ -155,7 +167,7 @@ class AudioDoADataset(Dataset):
         if self.heatmap_label == True:
             # heatmap_tensor = create_heatmap(doa_tensor)
             # heatmap_tensor = create_heatmap(doap_tensor, grid_size=128, sigma=2)
-            heatmap_tensor = create_heatmap_multiband(doap, grid_size=128, center_freqs=center_freqs)
+            heatmap_tensor = create_heatmap_multiband(doap, grid_size=128)
         else:
             result = []
             for source in sources:
@@ -223,19 +235,6 @@ def create_heatmap(doa, grid_size=128, sigma=4, kernel_size=None):
 
     return torch.from_numpy(heatmap).float()
 
-def heatmap_plot(heatmap, title="Heatmap", absflag=False):
-    from matplotlib import pyplot as plt
-    plt.figure(figsize=(6, 5))
-    if absflag:
-        plt.imshow(heatmap, cmap='jet', origin='lower', vmin=0, vmax=1)
-    else:
-        plt.imshow(heatmap, cmap='jet', origin='lower')
-    plt.colorbar(label='Intensity')
-    plt.title(title)
-    plt.xlabel('Beta (degrees)')
-    plt.ylabel('Alpha (degrees)')
-    plt.show()
-
 def create_heatmap_multiband(doap, grid_size=128, center_freqs=[31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]):
     # 初始化热力图矩阵
     heatmap = np.zeros((grid_size, grid_size))
@@ -283,12 +282,12 @@ def create_heatmap_multiband(doap, grid_size=128, center_freqs=[31.5, 63, 125, 2
             band_heatmap = gaussian_filter(band_heatmap, sigma=sigma)
 
             # TODO: 测试代码 - 可视化每个频段的热力图
-            heatmap_plot(band_heatmap, title=f"Band {center_freqs[band_idx]} Hz Heatmap", absflag=True)
+            # heatmap_plot(band_heatmap, title=f"Band {center_freqs[band_idx]} Hz Heatmap", absflag=True)
 
             # 叠加到总热力图
             heatmap += band_heatmap
     # TODO: 测试代码 - 可视化叠加后的热力图
-    heatmap_plot(heatmap, title="Combined Heatmap")
+    # heatmap_plot(heatmap, title="Combined Heatmap")
 
     return torch.from_numpy(heatmap).float()
 
@@ -318,7 +317,7 @@ if __name__ == "__main__":
     for batch_audio, batch_doa in train_loader:
         print(f"Batch audio shape: {batch_audio.shape}")
         print(f"Batch DoA shape: {batch_doa.shape}")
-        heatmap_plot(batch_doa[0].numpy(), title="Sample Heatmap")
+        # heatmap_plot(batch_doa[0].numpy(), title="Sample Heatmap")
         break
 """
     train_loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn)
