@@ -61,6 +61,7 @@ def add_noise(audio_data, SNR):
     noise_std = np.sqrt(noise_power)
     noise = np.random.normal(0, noise_std, audio_data.shape)
     audio_data += noise
+    return  audio_data
 
 
 class AudioDoADataset(Dataset):
