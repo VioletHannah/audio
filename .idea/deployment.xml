@@ -1,39 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="kehan.zeng@10.8.0.51:22 password (4)" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="kehan.zeng@10.8.0.51:22 password" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
       <paths name="kehan.zeng@10.8.0.51:22 password">
         <serverdata>
           <mappings>
             <mapping deploy="/home/kehan.zeng/code/ssl" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="kehan.zeng@10.8.0.51:22 password (2)">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/tmp/pycharm_project_289" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="kehan.zeng@10.8.0.51:22 password (3)">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/kehan.zeng/code/ssl" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="kehan.zeng@10.8.0.51:22 password (4)">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/kehan.zeng/code/ssl" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="zengkehan@10.8.0.6:22 password">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/zengkehan/ssl" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 import soundfile as sf
 import glob
 import math
-from util import apply_gaussian_filter_with_preserved_peak, azimuth_elevation_to_alpha_beta
+from util import apply_gaussian_filter_with_preserved_peak, azimuth_elevation_to_alpha_beta, heatmap_plot
 
 
 def get_alpha_beta(sources):
@@ -84,10 +84,15 @@ class AudioDoADataset(Dataset):
         self.duration = duration
         self.heatmap_label = heatmap_label
         self.augm = augm
+
         self.window_samples = 16000
         # self.target_samples = int(sample_rate * duration)
         self.selected_indices = [0, 2, 4, 6, 9, 11, 13, 15]  # 对应1,3,5,7,10,12,14,16
         self.n_mics = len(self.selected_indices)
+
+        self.center_freqs = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+        self.sigmas = self._compute_sigmas(self.center_freqs)
+        self.kernel_sizes = [max(3, min(int(6 * sigma) + 1, 21)) for sigma in self.sigmas]
 
         # 获取所有房间目录
         all_rooms = sorted(glob.glob(os.path.join(self.wav_dir, "*")))
@@ -115,6 +120,37 @@ class AudioDoADataset(Dataset):
 
     def __len__(self):
         return len(self.rooms)
+
+    @staticmethod
+    def _compute_sigmas(center_freqs, min_sigma=2.0, max_sigma=6.0):
+        """
+        预计算每个频段对应的 sigma 值
+
+        Args:
+            center_freqs: 中心频率列表
+            min_sigma: 高频对应的最小 sigma
+            max_sigma: 低频对应的最大 sigma
+
+        Returns:
+            sigmas: 每个频段的 sigma 值列表
+        """
+        min_freq, max_freq = center_freqs[0], center_freqs[-1]
+        sigmas = []
+
+        for freq in center_freqs:
+            # 在对数尺度上线性插值
+            log_freq = np.log10(freq)
+            log_min = np.log10(min_freq)
+            log_max = np.log10(max_freq)
+
+            # 归一化到 0-1 范围
+            normalized = (log_freq - log_min) / (log_max - log_min)
+
+            # 映射到 sigma 范围（高频对应小 sigma，低频对应大 sigma）
+            sigma = max_sigma - normalized * (max_sigma - min_sigma)
+            sigmas.append(sigma)
+
+        return sigmas
 
     def __getitem__(self, idx):
         room_path = self.rooms[idx]
@@ -205,6 +241,47 @@ class AudioDoADataset(Dataset):
 
         return x
 
+    def _create_heatmap_multiband(self, doap, grid_size=128):
+        """
+        使用预计算的 sigma 和 kernel_size 创建热图
+
+        Args:
+            doap: 包含 (alpha, beta, intensity_list) 的列表
+            grid_size: 热图尺寸
+
+        Returns:
+            热图张量
+        """
+        heatmap = np.zeros((grid_size, grid_size))
+
+        # 遍历每个声源
+        for point in doap:
+            alpha, beta, intensity_list = point
+            x = int(np.clip(alpha + 63, 0, grid_size - 1))
+            y = int(np.clip(beta + 63, 0, grid_size - 1))
+
+            # 遍历每个频段（使用预计算的参数）
+            for band_idx, intensity in enumerate(intensity_list):
+                sigma = self.sigmas[band_idx]
+
+                # 创建当前频段的热力图
+                band_heatmap = np.zeros((grid_size, grid_size))
+                band_heatmap[x, y] = intensity
+
+                # 应用高斯滤波
+                band_heatmap = gaussian_filter(band_heatmap, sigma=sigma)
+
+                # 叠加到总热力图
+                heatmap += band_heatmap
+
+        # 归一化热力图到 0-1 范围
+        heatmap_min = np.min(heatmap)
+        heatmap_max = np.max(heatmap)
+        if heatmap_max > heatmap_min:
+            heatmap = (heatmap - heatmap_min) / (heatmap_max - heatmap_min)
+
+        return torch.from_numpy(heatmap).float()
+
 
 # doa: 一个[source num, 2]的二维数组
 # doap: 一个[source num, 3]的二维数组，包含alpha, beta和intensity
@@ -290,12 +367,18 @@ def create_heatmap_multiband(doap, grid_size=128, center_freqs=[31.5, 63, 125, 2
     # TODO: 测试代码 - 可视化叠加后的热力图
     # heatmap_plot(heatmap, title="Combined Heatmap")
 
+    # 归一化热力图到0-1范围
+    heatmap_min = np.min(heatmap)
+    heatmap_max = np.max(heatmap)
+    if heatmap_max > heatmap_min:
+        heatmap = (heatmap - heatmap_min) / (heatmap_max - heatmap_min)
+
     return torch.from_numpy(heatmap).float()
 
 
 if __name__ == "__main__":
     dataset = AudioDoADataset(
-        root_dir="/home/kehan.zeng/DATA2/voice/multisource_with_freq_analysis",
+        root_dir="/home/kehan.zeng/DATA2/voice/mssl_libri",
         split="train",
         n_channels=256,
         sample_rate=48000
@@ -318,7 +401,7 @@ if __name__ == "__main__":
     for batch_audio, batch_doa in train_loader:
         print(f"Batch audio shape: {batch_audio.shape}")
         print(f"Batch DoA shape: {batch_doa.shape}")
-        # heatmap_plot(batch_doa[0].numpy(), title="Sample Heatmap")
+        heatmap_plot(batch_doa[0].numpy(), title="Sample Heatmap")
         break
 """
     train_loader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=4, collate_fn=collate_fn)

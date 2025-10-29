@@ -90,6 +90,6 @@ if __name__ == "__main__":
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-            }, f'/home/kehan.zeng/DATA1/param/freq_libri/freq_{epoch}.pth')
+            }, f'/home/kehan.zeng/DATA1/param/libri/mssl_{epoch}.pth')
 
         scheduler.step()

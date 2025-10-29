@@ -16,15 +16,26 @@ import json
 import os
 import glob
 
-def generate_source_position(room_dimension, r_min=4, r_max=30, azimuth=None, elevation=None):
+def generate_source_position(room_dimension, r_min=4, r_max=30, azimuth=None, elevation=None, cone_plus:bool=False):
     """
     随机生成一个声源位置
     :param room_dimension: 房间尺寸
+    :param r_min: 最小距离
+    :param r_max: 最大距离
+    :param azimuth: 方位角（弧度）
+    :param elevation: 俯仰角（弧度）
+    :param cone_plus: 是否在锥体范围外也生成声源
+    0度在x轴正方向，逆时针旋转
+    俯仰角范围：27-90度（锥体内）或1-90度（锥体内外）
+    0度在水平面上，90度在正上方
     :return: 声源位置数组，方位角，俯仰角（弧度）
     """
     if azimuth is None and elevation is None:
         azimuth = np.deg2rad(np.random.uniform(0, 360))  # 方位角
-        elevation = np.deg2rad(np.random.uniform(1, 91))
+        if cone_plus:
+            elevation = np.deg2rad(np.random.uniform(1, 91))
+        else:
+            elevation = np.deg2rad(np.random.uniform(27, 91))
     r = np.random.uniform(r_min, r_max)  # 距离
 
     # 转换为笛卡尔坐标
@@ -32,7 +43,7 @@ def generate_source_position(room_dimension, r_min=4, r_max=30, azimuth=None, el
     y = r * np.cos(elevation) * np.sin(azimuth) + room_dimension[1] / 2
     z = r * np.sin(elevation)
 
-    final_elevation = elevation if np.rad2deg(elevation) >= 27 else np.deg2rad(27)
+    final_elevation = elevation if np.rad2deg(elevation) >= 27 else np.deg2rad(27) # 限制最小俯仰角标签为27度
     return np.array([x, y, z]), azimuth, final_elevation
 
 def generate_mic_array_positions(mic_num_per_line, mic_length, room_dimension):
@@ -394,7 +405,7 @@ def generate_multi_source_dataset(
 if __name__ == '__main__':
     generate_multi_source_dataset(
         dataset_path="/home/kehan.zeng/DATA2/librispeech/LibriSpeech/test-clean",
-        output_path="/home/kehan.zeng/DATA2/voice/mssl_libri",
+        output_path="/home/kehan.zeng/DATA2/voice/mssl_libri_cone",
         num_samples=3000,
         room_dimension=(120, 120, 100),
         mic_length=0.12,  # 8mm 麦克风间距 * 15 = 120mm
