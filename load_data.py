@@ -313,6 +313,64 @@ def create_heatmap(doa, grid_size=128, sigma=4, kernel_size=None):
 
     return torch.from_numpy(heatmap).float()
 
+
+def create_heatmap_continuous(doap, grid_size=128, freq_bins=128):
+    """
+    基于连续频谱创建热力图
+
+    参数:
+        doap: list of (alpha, beta, intensity_array)
+              intensity_array: numpy array, shape (freq_bins,)
+        grid_size: 热力图大小
+        freq_bins: 频率bins数量
+
+    返回:
+        heatmap: torch.Tensor, shape (grid_size, grid_size)
+    """
+    import torch
+    from scipy.ndimage import gaussian_filter
+
+    heatmap = np.zeros((grid_size, grid_size))
+
+    # 频率自适应sigma：对数衰减
+    sigma_max = 6.0
+    sigma_min = 2.0
+    freq_indices = np.arange(freq_bins)
+    log_weights = np.log10(1 + freq_indices) / np.log10(1 + freq_bins)
+    sigmas = sigma_max - (sigma_max - sigma_min) * log_weights
+
+    for point in doap:
+        alpha, beta, intensity_array = point
+
+        # 确保intensity_array是numpy数组
+        if not isinstance(intensity_array, np.ndarray):
+            intensity_array = np.array(intensity_array)
+
+        # 坐标映射
+        x = int(np.clip(alpha + 63, 0, grid_size - 1))
+        y = int(np.clip(beta + 63, 0, grid_size - 1))
+
+        # 遍历每个频率bin
+        for freq_idx, intensity in enumerate(intensity_array):
+            if intensity <= 1e-6:
+                continue
+
+            sigma = sigmas[freq_idx]
+
+            # 创建频率热力图
+            freq_heatmap = np.zeros((grid_size, grid_size))
+            freq_heatmap[x, y] = intensity
+            freq_heatmap = gaussian_filter(freq_heatmap, sigma=sigma)
+
+            heatmap += freq_heatmap
+
+    # 归一化
+    if heatmap.max() > heatmap.min():
+        heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min())
+
+    return torch.from_numpy(heatmap).float()
+
+
 def create_heatmap_multiband(doap, grid_size=128, center_freqs=[31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]):
     # 初始化热力图矩阵
     heatmap = np.zeros((grid_size, grid_size))
@@ -376,7 +434,7 @@ def create_heatmap_multiband(doap, grid_size=128, center_freqs=[31.5, 63, 125, 2
     return torch.from_numpy(heatmap).float()
 
 
-if __name__ == "__main__":
+def main():
     dataset = AudioDoADataset(
         root_dir="/home/kehan.zeng/DATA2/voice/mssl_libri",
         split="train",

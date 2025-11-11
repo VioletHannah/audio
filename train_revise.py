@@ -13,7 +13,7 @@ from model.MultiSource_3DCNN_mapNet_revise import MultiSource3DCNNMapNetRevise
 
 
 if __name__ == "__main__":
-    logger = get_logger("./freq_revise_0911.log")
+    logger = get_logger("./freq_revise_1030.log")
     if torch.cuda.is_available():
         device = torch.device("cuda")          # 使用 GPU
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")
@@ -21,7 +21,7 @@ if __name__ == "__main__":
         device = torch.device("cpu")           # 回退到 CPU
         print("CUDA not available, using CPU.")
     ################## 这里设置数据集 ###################
-    datadir = "/home/kehan.zeng/DATA2/voice/multisource_with_freq_analysis"
+    datadir = "/home/kehan.zeng/DATA2/voice/mssl_libri"
     dataset = AudioDoADataset(root_dir=datadir, split="train")
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, drop_last=True)
 
@@ -86,6 +86,6 @@ if __name__ == "__main__":
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-            }, f'/home/kehan.zeng/DATA1/param/freq/revise_{epoch}.pth')
+            }, f'/home/kehan.zeng/DATA1/param/libri/revise_{epoch}.pth')
 
         scheduler.step()

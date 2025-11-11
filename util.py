@@ -6,10 +6,103 @@
 # @File : util.py
 # @Software: PyCharm
 import numpy as np
+from scipy.signal import resample
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 import logging
 import datetime
+
+
+def compare_spectrum_methods(signal, position, mics, fs=48000):
+    """对比不同频谱方法的结果"""
+    import matplotlib.pyplot as plt
+
+    # FFT方法
+    from mSSLdataset import calculate_source_intensity_fft_global
+    int_fft, freq_fft = calculate_source_intensity_fft_global(
+        signal, position, mics, fs=fs, freq_bins=128
+    )
+
+    # Welch方法
+    from mSSLdataset import calculate_source_intensity_welch_spectrum
+    int_welch, freq_welch = calculate_source_intensity_welch_spectrum(
+        signal, position, mics, fs=fs, freq_bins=128
+    )
+
+    plt.figure(figsize=(12, 5))
+    plt.semilogx(freq_fft, int_fft, 'b-', label='FFT', linewidth=1.5)
+    plt.semilogx(freq_welch, int_welch, 'r--', label='Welch', linewidth=1.5)
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Intensity (dB SPL)')
+    plt.title('Spectrum Method Comparison')
+    plt.legend()
+    plt.grid(True, alpha=0.3, which='both')
+    plt.tight_layout()
+    plt.show()
+
+def visualize_continuous_spectrum(intensities, frequencies, title="Continuous Spectrum"):
+    """可视化连续频谱"""
+    import matplotlib.pyplot as plt
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # 线性尺度
+    ax1.plot(frequencies, intensities, 'b-', linewidth=1.5)
+    ax1.set_xlabel('Frequency (Hz)', fontsize=12)
+    ax1.set_ylabel('Intensity (dB SPL)', fontsize=12)
+    ax1.set_title(f'{title} - Linear Scale', fontsize=14)
+    ax1.grid(True, alpha=0.3)
+
+    # 对数尺度
+    ax2.semilogx(frequencies, intensities, 'r-', linewidth=1.5)
+    ax2.set_xlabel('Frequency (Hz, log scale)', fontsize=12)
+    ax2.set_ylabel('Intensity (dB SPL)', fontsize=12)
+    ax2.set_title(f'{title} - Log Scale', fontsize=14)
+    ax2.grid(True, alpha=0.3, which='both')
+
+    plt.tight_layout()
+    plt.savefig(f'{title.replace(" ", "_")}.png', dpi=150)
+    plt.show()
+
+def prepare_audio_segment(audio, orig_fs, target_fs, samples_len):
+    """
+    预处理音频片段，统一单声道，长度和采样率
+    1. 转为单声道
+    2. 统一采样率
+    3. 补齐或截取到指定长度
+    4. 返回处理后的音频片段
+    """
+    audio = np.asarray(audio)
+    if audio.size == 0:
+        return np.zeros(samples_len, dtype=np.float32)
+    # 转为单声道
+    if audio.ndim > 1:
+        if audio.shape[1] == 2:
+            audio = np.mean(audio, axis=1)
+        else:
+            audio = audio[:, 0]
+    # 统一采样率
+    if orig_fs != target_fs and len(audio) > 0:
+        new_len = int(np.round(len(audio) * float(target_fs) / float(orig_fs)))
+        if new_len <= 0:
+            new_len = samples_len
+        audio = resample(audio, new_len)
+    # 补齐或截取到指定长度
+    if len(audio) < samples_len:
+        repeats = int(np.ceil(samples_len / len(audio)))
+        audio = np.tile(audio, repeats)
+    audio = np.asarray(audio[:samples_len], dtype=np.float32)
+    return audio
+
+def rms_scaling(audio, target_rms=1.0):
+    # 将声源信号放大到1.0
+    # target_rms: 目标RMS值，可以根据需要调整
+    current_rms = np.sqrt(np.mean(audio ** 2))
+    if current_rms > 0:
+        scaling = target_rms / current_rms
+        audio *= scaling
+    return audio
+
 
 def heatmap_plot(heatmap, title="Heatmap", absflag=False):
     from matplotlib import pyplot as plt
