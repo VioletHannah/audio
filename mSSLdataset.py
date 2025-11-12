@@ -5,17 +5,15 @@
 # @File : mSSLdataset.py
 # @Software: PyCharm
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pyroomacoustics as pra
 import soundfile as sf
-from scipy.signal import resample, butter, filtfilt, sosfiltfilt, stft, get_window
 import warnings
 import random
 import json
 import os
 import glob
-from util import rms_scaling, prepare_audio_segment
+from util import rms_scaling, prepare_audio_segment, calculate_source_intensity_welch_spectrum
 
 
 def generate_source_position(room_dimension, r_min=4, r_max=30, azimuth=None, elevation=None, cone_plus:bool=False):
@@ -108,177 +106,6 @@ def calculate_source_intensity_over_time(source_signal, source_position, mic_pos
         intensities.append(window_intensity)
 
     return intensities
-
-def calculate_source_intensity_welch_spectrum(
-        source_signal,
-        source_position,
-        mic_positions,
-        fs=48000,
-        freq_bins=128,
-        freq_range=(20, 16000),
-        nperseg=2048,
-        adc_range=1.0,
-        sensitivity_mv_pa=500
-):
-    """使用Welch方法计算全局功率谱密度"""
-    from scipy.signal import welch
-    import warnings
-
-    # 计算距离衰减
-    distances = np.linalg.norm(
-        np.array(source_position).reshape(3, 1) - mic_positions,
-        axis=0
-    )
-    avg_attenuation = np.mean(1.0 / (distances + 1e-8))
-
-    # Welch方法计算PSD
-    freqs_welch, psd_welch = welch(
-        source_signal,
-        fs=fs,
-        nperseg=nperseg,
-        noverlap=nperseg // 2,
-        window='hann',
-        scaling='density'
-    )
-
-    # 选择频率范围
-    fmin, fmax = freq_range
-    freq_mask = (freqs_welch >= fmin) & (freqs_welch <= fmax)
-    freqs_selected = freqs_welch[freq_mask]
-    psd_selected = psd_welch[freq_mask]
-
-    if len(freqs_selected) < 2:
-        return np.zeros(freq_bins), np.logspace(np.log10(fmin), np.log10(fmax), freq_bins)
-
-    # 对数频率重采样
-    target_freqs = np.logspace(np.log10(fmin), np.log10(fmax), freq_bins)
-    log_freqs = np.log10(freqs_selected)
-    log_targets = np.log10(target_freqs)
-    psd_resampled = np.interp(log_targets, log_freqs, psd_selected)
-
-    # PSD -> RMS -> SPL
-    bandwidth = fs / nperseg  # 频率分辨率
-    rms_voltage = np.sqrt(psd_resampled * bandwidth)
-    p_rms = rms_voltage * (adc_range * 1000.0) / sensitivity_mv_pa
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        spl = np.where(p_rms > 20e-6, 20 * np.log10(p_rms / 20e-6), 0.0)
-
-    intensities = spl * avg_attenuation
-    intensities = np.clip(intensities, 0, None)
-
-    return intensities, target_freqs
-
-
-def calculate_source_intensity_fft_global(
-        source_signal,
-        source_position,
-        mic_positions,
-        fs=48000,
-        freq_bins=128,
-        freq_range=(20, 16000),
-        window='hann',
-        adc_range=1.0,
-        sensitivity_mv_pa=500
-):
-    """
-    使用FFT计算声源的全局频谱强度
-
-    优点：
-    - 直接计算整个信号的频谱，无时间维度
-    - 计算效率高（单次FFT）
-    - 物理意义明确：每个频率的总能量
-
-    参数:
-        source_signal: ndarray, 输入信号 shape (n_samples,)
-        source_position: (3,) 声源坐标
-        mic_positions: (3, N) 麦克风坐标
-        fs: 采样率
-        freq_bins: 输出的频率bins数量
-        freq_range: (fmin, fmax) 频率范围 Hz
-        window: 窗函数类型 'hann', 'hamming', 'blackman'
-        adc_range, sensitivity_mv_pa: 电声转换参数
-
-    返回:
-        intensities: ndarray shape (freq_bins,), 各频率bin的强度
-        frequencies: ndarray shape (freq_bins,), 对应的频率值(Hz)
-    """
-
-    # 1. 计算距离衰减
-    distances = np.linalg.norm(
-        np.array(source_position).reshape(3, 1) - mic_positions,
-        axis=0
-    )
-    avg_attenuation = np.mean(1.0 / (distances + 1e-8))
-
-    # 2. 应用窗函数减少频谱泄漏
-    n_samples = len(source_signal)
-    window_func = get_window(window, n_samples)
-    windowed_signal = source_signal * window_func
-
-    # 3. 计算FFT（实信号使用rfft更高效）
-    fft_result = np.fft.rfft(windowed_signal)
-    fft_freqs = np.fft.rfftfreq(n_samples, 1 / fs)
-
-    # 4. 计算功率谱密度（PSD）
-    # PSD = |FFT|^2 / N，归一化
-    psd = (np.abs(fft_result) ** 2) / n_samples
-
-    # 补偿窗函数的能量损失
-    window_power = np.sum(window_func ** 2) / n_samples
-    psd = psd / window_power
-
-    # 5. 选择感兴趣的频率范围
-    fmin, fmax = freq_range
-    freq_mask = (fft_freqs >= fmin) & (fft_freqs <= fmax)
-    freqs_selected = fft_freqs[freq_mask]
-    psd_selected = psd[freq_mask]
-
-    if len(freqs_selected) < 2:
-        # 如果没有有效频率，返回零
-        return np.zeros(freq_bins), np.logspace(np.log10(fmin), np.log10(fmax), freq_bins)
-
-    # 6. 重采样到对数频率网格（更符合感知）
-    # 对数频率采样：低频密集，高频稀疏
-    target_freqs = np.logspace(
-        np.log10(fmin),
-        np.log10(fmax),
-        freq_bins
-    )
-
-    # 使用对数插值（在对数域内线性插值）
-    log_freqs_selected = np.log10(freqs_selected)
-    log_target_freqs = np.log10(target_freqs)
-
-    # 插值PSD到目标频率
-    psd_resampled = np.interp(
-        log_target_freqs,
-        log_freqs_selected,
-        psd_selected
-    )
-
-    # 7. 转换为RMS电压
-    # PSD是功率，RMS = sqrt(PSD)
-    rms_voltage = np.sqrt(psd_resampled)
-
-    # 8. 电压 -> 声压 (Pa)
-    p_rms = rms_voltage * (adc_range * 1000.0) / sensitivity_mv_pa
-
-    # 9. 转换为声压级 (dB SPL)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        spl = np.where(
-            p_rms > 20e-6,
-            20 * np.log10(p_rms / 20e-6),
-            0.0
-        )
-
-    # 10. 应用距离衰减
-    intensities = spl * avg_attenuation
-    intensities = np.clip(intensities, 0, None)
-
-    return intensities, target_freqs
 
 def generate_multi_source_dataset(
         num_samples=1000,

@@ -16,7 +16,7 @@ import soundfile as sf
 import glob
 import math
 from util import apply_gaussian_filter_with_preserved_peak, azimuth_elevation_to_alpha_beta, heatmap_plot
-
+import dataset_config as config
 
 def get_alpha_beta(sources):
     result_list = []
@@ -63,6 +63,33 @@ def add_noise(audio_data, SNR):
     audio_data += noise
     return  audio_data
 
+def create_heatmap_continuous(doap, grid_size=128, freq_bins=config.WELCH_FREQ_BINS):
+    """
+    使用连续Welch频谱分区，从多个数据源创建二维热力图。
+    """
+    heatmap = np.zeros((grid_size, grid_size))
+
+    sigma_max, sigma_min = 6.0, 2.0
+    freq_indices = np.arange(freq_bins)
+    log_weights = np.log10(1 + freq_indices) / np.log10(1 + freq_bins)
+    sigmas = sigma_max - (sigma_max - sigma_min) * log_weights
+
+    for alpha, beta, intensity_array in doap:
+        x = int(np.clip(alpha + 63, 0, grid_size - 1))
+        y = int(np.clip(beta + 63, 0, grid_size - 1))
+
+        for i, val in enumerate(intensity_array):
+            if val <= 1e-6:
+                continue
+            band = np.zeros((grid_size, grid_size))
+            band[x, y] = val
+            heatmap += gaussian_filter(band, sigma=sigmas[i])
+
+    # 可选：标准化到[0, 1]
+    if heatmap.max() > heatmap.min():
+        heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min())
+
+    return torch.from_numpy(heatmap).float()
 
 class AudioDoADataset(Dataset):
     def __init__(self, root_dir="G:\\audio\sin64_dataset", split="train", n_channels=64, sample_rate=48000, duration=1.0, heatmap_label=True, augm = False):
