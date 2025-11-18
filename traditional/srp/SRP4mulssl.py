@@ -213,54 +213,71 @@ def load_wav_files_to_freqdomain(folder, num_channels=64):
 def match_sources(true_angles, pred_angles, max_error=30):
     """
     使用最优匹配真实声源和预测声源（考虑双向匹配）
-    true_angles: 真实角度列表 [(az1, cola1), ...]
-    pred_angles: 预测角度列表 [(az2, cola2), ...]
-    max_error: 最大允许匹配误差（度）
-    返回匹配后的角度对列表，漏检数量，错检数量，定位正确数量
+    全量候选对 -> 最优匹配 -> 阈值判断
+
+    参数：
+        true_angles: 真实角度列表 [(az1, cola1), ...]
+        pred_angles: 预测角度列表 [(az2, cola2), ...]
+        max_error: 最大允许匹配误差（度）
+    返回: 匹配后的角度对列表，漏检数量，错检数量，定位正确数量
     """
-    matched = []
+    matched_pairs = []
     used_true = set()
     used_pred = set()
-    correct_matches = 0
 
-    # 生成所有可能匹配对（在误差范围内）
+    # Step 1: 生成所有候选
     candidates = []
-    for t_idx, (t_az, t_cola) in enumerate(true_angles):
-        for p_idx, (p_az, p_cola) in enumerate(pred_angles):
-            az_error = min(abs(p_az - t_az), 360 - abs(p_az - t_az))
-            cola_error = abs(p_cola - t_cola)
-            dist = np.hypot(az_error, cola_error)
-            if dist <= max_error:
-                candidates.append((dist, t_idx, p_idx))
+    for t_idx, (t_az, t_el) in enumerate(true_angles):
+        for p_idx, (p_az, p_el) in enumerate(pred_angles):
+            az_err = min(abs(p_az - t_az), 360 - abs(p_az - t_az))
+            el_err = abs(p_el - t_el)
+            dist = np.hypot(az_err, el_err)
+            candidates.append((dist, t_idx, p_idx))
 
-    # 按距离排序以优先匹配最佳对
-    candidates.sort()
+    # Step 2: greedy 按最小距离匹配
+    candidates.sort(key=lambda x: x[0])
+    matches = {}  # true_idx -> (pred_idx, dist)
 
-    # 进行最优匹配（类似匈牙利算法的简化版）
     for dist, t_idx, p_idx in candidates:
         if t_idx not in used_true and p_idx not in used_pred:
             used_true.add(t_idx)
             used_pred.add(p_idx)
-            correct_matches += 1
-            t_az, t_cola = true_angles[t_idx]
-            p_az, p_cola = pred_angles[p_idx]
-            matched.append((t_az, t_cola, p_az, p_cola))
+            matches[t_idx] = (p_idx, dist)
 
-    # 添加未匹配的真实声源（漏检）
-    for t_idx, (t_az, t_cola) in enumerate(true_angles):
-        if t_idx not in used_true:
-            matched.append((t_az, t_cola, None, None))
+    # Step 3: 根据阈值判断匹配是否正确
+    correct_matches = 0
+    false_alarms = 0
+    missed_detections = 0
 
-    # 添加未匹配的预测声源（错检）
-    for p_idx, (p_az, p_cola) in enumerate(pred_angles):
+    for t_idx in range(len(true_angles)):
+        t_az, t_el = true_angles[t_idx]
+
+        if t_idx in matches:
+            p_idx, dist = matches[t_idx]
+            p_az, p_el = pred_angles[p_idx]
+
+            if dist <= max_error:
+                # 正确匹配
+                correct_matches += 1
+                matched_pairs.append((t_az, t_el, p_az, p_el, dist))
+            else:
+                # 匹配但超过阈值 → 错检 + 漏检
+                missed_detections += 1
+                false_alarms += 1
+                matched_pairs.append((t_az, t_el, p_az, p_el, dist))
+        else:
+            # 真实没有配到预测 → 漏检
+            missed_detections += 1
+            matched_pairs.append((t_az, t_el, None, None, None))
+
+    # Step 4: 预测中未被使用的 → 错检
+    for p_idx in range(len(pred_angles)):
         if p_idx not in used_pred:
-            matched.append((None, None, p_az, p_cola))
+            p_az, p_el = pred_angles[p_idx]
+            false_alarms += 1
+            matched_pairs.append((None, None, p_az, p_el, None))
 
-    # 统计最终结果
-    missed_detections = len(true_angles) - correct_matches
-    false_alarms = len(pred_angles) - correct_matches
-
-    return matched, missed_detections, false_alarms, correct_matches
+    return matched_pairs, missed_detections, false_alarms, correct_matches
 
 
 def main(folder_path="/home/zengkehan/voice/multisource_dataset"):

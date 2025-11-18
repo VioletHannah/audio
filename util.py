@@ -194,6 +194,7 @@ def compare_spectrum_methods(signal, position, mics, fs=48000):
     int_fft, freq_fft = calculate_source_intensity_fft_global(
         signal, position, mics, fs=fs, freq_bins=128
     )
+    print(freq_fft.shape)
 
     # Welch方法
     int_welch, freq_welch = calculate_source_intensity_welch_spectrum(

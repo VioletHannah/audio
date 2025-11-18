@@ -14,7 +14,7 @@ from scipy.optimize import minimize
 import soundfile as sf
 
 from traditional.tdoa.gcc_phat import gcc_phat
-from NSDmultiSSLdata import generate_mic_array_positions
+from mSSLdataset import generate_mic_array_positions
 
 # 声学参数
 SOUND_SPEED = 343.0  # m/s

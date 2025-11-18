@@ -58,20 +58,116 @@ def blue_red_heatmap(data=None, title="4×4 Gaussian-3-point Heatmaps", save_pat
     return fig, axs
 
 
-def loc_source_position(heatmap):
-    heatmap = np.where(heatmap < 0.2, 0.0, heatmap) # 去除小于0.2的值
-    heatmap_int = (heatmap * 255).astype(np.uint8)
-    heatmap_int = cv2.threshold(heatmap_int, 127, 255, cv2.THRESH_BINARY)[1]
-    contours, _ = cv2.findContours(heatmap_int, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    lst = []
-    for contour in contours:
-        M = cv2.moments(contour)
-        if M['m00'] != 0:
-            cx = int(M['m10']/M['m00'])
-            cy = int(M['m01']/M['m00'])
-            lst.append([cx, cy])
+from scipy.ndimage import maximum_filter, gaussian_filter
+from sklearn.cluster import DBSCAN
+from scipy.spatial import cKDTree
+import numpy as np
 
-    return np.array(lst)
+def simple_dbscan(points, eps=3, min_samples=2):
+    """
+    简单版 DBSCAN（不依赖 sklearn）
+    """
+    tree = cKDTree(points)
+    n = len(points)
+    visited = np.zeros(n, dtype=bool)
+    labels = -1 * np.ones(n, dtype=int)
+    cluster_id = 0
+
+    for i in range(n):
+        if visited[i]:
+            continue
+        visited[i] = True
+
+        neighbors = tree.query_ball_point(points[i], eps)
+
+        if len(neighbors) < min_samples:
+            labels[i] = -1
+            continue
+
+        labels[i] = cluster_id
+        stack = neighbors.copy()
+
+        while stack:
+            j = stack.pop()
+            if not visited[j]:
+                visited[j] = True
+                nbr = tree.query_ball_point(points[j], eps)
+                if len(nbr) >= min_samples:
+                    stack.extend(nbr)
+
+            if labels[j] == -1:
+                labels[j] = cluster_id
+        cluster_id += 1
+
+    return labels
+
+
+def loc_source_position(heatmap,
+                            peak_thresh=0.2,
+                            neighborhood=3,
+                            db_eps=5,
+                            db_min_samples=1):
+    """
+    输入:
+        heatmap: 128×128
+    步骤:
+        1. 最大值滤波找到局部峰
+        2. 阈值筛选
+        3. DBSCAN 聚类多个峰
+        4. 每簇做强度加权质心
+    返回:
+        source_list: [(alpha, beta), ...]
+    """
+    # 先检查 heatmap 的值范围
+    print(f"Heatmap range: [{heatmap.min()}, {heatmap.max()}]")
+
+    # 使用相对阈值(例如最大值的 20%)
+    peak_thresh = heatmap.max() * 0.2
+
+    H = heatmap
+
+    # 1) 局部峰值检测 (maximum filter)
+    max_filt = maximum_filter(H, size=neighborhood)
+    peaks = np.where((np.abs(H - max_filt) < 1e-6) & (H > peak_thresh))
+
+    peak_points = np.stack(peaks, axis=1)   # shape (N,2)
+    if len(peak_points) == 0:
+        return []   # 没有声源
+
+    # 提取峰值强度
+    peak_values = H[peaks]
+
+    # 2) DBSCAN 聚类，把多个峰值合并成一个声源
+    # clustering = DBSCAN(eps=db_eps, min_samples=db_min_samples).fit(peak_points)
+    # labels = clustering.labels_
+    labels = simple_dbscan(peak_points, eps=db_eps, min_samples=db_min_samples)
+
+    source_list = []
+
+    for cluster_id in np.unique(labels):
+        if cluster_id == -1:
+            continue  # 噪声点略过(未归类)
+
+        cluster_mask = labels == cluster_id
+        cluster_points = peak_points[cluster_mask]   # (K,2)
+        cluster_values = peak_values[cluster_mask]   # (K,)
+
+        # 3) 强度加权质心
+        w = cluster_values
+        px = cluster_points[:, 0]
+        py = cluster_points[:, 1]
+
+        cx = np.sum(px * w) / np.sum(w)
+        cy = np.sum(py * w) / np.sum(w)
+
+        # 保存 (alpha, beta)
+        alpha = cx - 63
+        beta = cy - 63
+
+        source_list.append((alpha, beta))
+
+    return source_list
+
 
 
 def evaluate_model(dataset_path, model_path='sound_model.pth'):
@@ -123,82 +219,8 @@ def evaluate_model(dataset_path, model_path='sound_model.pth'):
                         pred_azimuth.append(np.radians(p_az))
                         pred_elevation.append(np.radians(p_cola))
 
-            # row_num = 4
-            # col_num = 4
-            # row_pred = []
-            # row_gt = []
-            # for h in range(row_num):
-            #     col_pred = []
-            #     col_gt = []
-            #     for w in range(col_num):
-            #      pred_slice = pred[h * col_num + w].cpu().detach().numpy()
-            #      heatmap_slice = y[h * col_num + w].cpu().detach().numpy()
-            #      pred_slice = np.pad(pred_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
-            #      heatmap_slice = np.pad(heatmap_slice[2:-2, 2:-2], ((2, 2), (2, 2)), 'constant', constant_values=1)
-            #      col_pred.append(pred_slice)
-            #      col_gt.append(heatmap_slice)
-            #     row_pred.append(np.concatenate(col_pred, axis=1))
-            #     row_gt.append(np.concatenate(col_gt, axis=1))
-            # result = np.concatenate(row_pred, axis=0)
-            # gt = np.concatenate(row_gt, axis=0)
-            # result_uint8 = (result * 255).astype('uint8')
-            # cv2.imwrite("evalresult.png", result_uint8)
-            # gt_uint8 = (gt * 255).astype('uint8')
-            # cv2.imwrite("evalgt.png", gt_uint8)
-
-            # true_azimuth.extend(y[:, 0].cpu().numpy().tolist())
-            # true_elevation.extend(y[:, 1].cpu().numpy().tolist())
-
-            # 预测和计算误差
-            # pred_azimuth.extend(pred[:, 0].cpu().numpy().tolist())
-            # pred_elevation.extend(pred[:, 1].cpu().numpy().tolist())
-
     plot_joint_error_heatmap(true_azimuth, true_elevation, pred_azimuth, pred_elevation)
 
-
-"""
-
-            loss = AngleLoss(pred, y)
-            total_loss += loss.item()
-
-            # 转换为角度误差（假设输出为弧度）
-            azimuth_rad_errors = torch.abs(pred[:, 0] - y[:, 0])
-            elevation_rad_errors = torch.abs(pred[:, 1] - y[:, 1])
-
-            # 处理方位角周期性（转换为度数）
-            azimuth_deg_errors = torch.rad2deg(torch.min(azimuth_rad_errors,
-                                                         2 * torch.pi - azimuth_rad_errors))
-            elevation_deg_errors = torch.rad2deg(elevation_rad_errors)
-
-            all_azimuth_errors.extend(azimuth_deg_errors.cpu().numpy())
-            all_elevation_errors.extend(elevation_deg_errors.cpu().numpy())
-
-
-    # 4. 打印统计信息
-    print(f"Test Loss: {total_loss / len(test_loader):.4f}")
-    print(f"Azimuth MAE: {np.mean(all_azimuth_errors):.2f}° ± {np.std(all_azimuth_errors):.2f}°")
-    print(f"Elevation MAE: {np.mean(all_elevation_errors):.2f}° ± {np.std(all_elevation_errors):.2f}°")
-"""
-    # 5. 可视化误差分布
-
-
-    # plt.figure(figsize=(12, 5))
-    #
-    # plt.subplot(121)
-    # plot_polar_heatmap(all_azimuth_errors, all_elevation_errors,
-    #                    "方位角-俯仰角联合误差分布")
-    #
-    # plt.subplot(122)
-    # plt.hist2d(all_azimuth_errors, all_elevation_errors,
-    #            bins=(30, 20), cmap='viridis')
-    # plt.colorbar(label='样本数量')
-    # plt.xlabel('方位角误差 (°)')
-    # plt.ylabel('俯仰角误差 (°)')
-    # plt.title("二维直方图误差分布")
-    #
-    # plt.tight_layout()
-    # plt.savefig('error_analysis.png')
-    # plt.show()
 
 if __name__ == "__main__":
     evaluate_model(dataset_path="/home/zengkehan/voice/multisource_dataset",
